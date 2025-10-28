@@ -6,7 +6,7 @@ app.use(express.json());
 
 // 🔹 Rota de verificação (usada pela Meta)
 app.get("/webhook", (req, res) => {
-  const verify_token = "meu_token_secreto"; // Mude se quiser
+  const verify_token = "08182812"; // Mude se quiser
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
