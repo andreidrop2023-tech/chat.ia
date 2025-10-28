@@ -1,73 +1,79 @@
 import express from "express";
-import axios from "axios";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
+import OpenAI from "openai";
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-// 🔹 Rota de verificação (usada pela Meta)
+const PORT = process.env.PORT || 3000;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// ✅ VERIFICAÇÃO DO WEBHOOK (necessário para Meta)
 app.get("/webhook", (req, res) => {
-  const verify_token = "08182812"; // Mude se quiser
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === verify_token) {
-    console.log("Webhook verificado com sucesso!");
+  if (mode && token === VERIFY_TOKEN) {
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// 🔹 Rota principal: recebe mensagens e responde com GPT
+// ✅ RECEBE MENSAGENS DO WHATSAPP E RESPONDE COM OPENAI
 app.post("/webhook", async (req, res) => {
-  const message = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  if (!message) return res.sendStatus(200);
+  try {
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const messages = changes?.value?.messages;
 
-  const from = message.from;
-  const text = message.text?.body;
+    if (messages && messages[0]) {
+      const msg = messages[0];
+      const from = msg.from;
+      const text = msg.text?.body;
 
-  if (text) {
-    try {
-      // 🔸 1. Envia o texto para o GPT
-      const gptResponse = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
+      console.log("📩 Mensagem recebida:", text);
+
+      // Gera resposta com OpenAI
+      const completion = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: text }],
+      });
+
+      const resposta = completion.choices[0].message.content;
+      console.log("🤖 Resposta:", resposta);
+
+      // Envia resposta pelo WhatsApp Cloud API
+      await fetch(
+        "https://graph.facebook.com/v19.0/885804834608431/messages",
         {
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: text }],
-        },
-        {
+          method: "POST",
           headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Authorization": `Bearer ${WHATSAPP_TOKEN}`,
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: from,
+            text: { body: resposta },
+          }),
         }
       );
-
-      const reply = gptResponse.data.choices[0].message.content;
-
-      // 🔸 2. Envia a resposta para o WhatsApp
-      await axios.post(
-        `https://graph.facebook.com/v21.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        {
-          messaging_product: "whatsapp",
-          to: from,
-          type: "text",
-          text: { body: reply },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.META_TOKEN}`,
-          },
-        }
-      );
-
-      console.log("✅ Mensagem enviada com sucesso!");
-    } catch (error) {
-      console.error("❌ Erro:", error.response?.data || error.message);
     }
-  }
 
-  res.sendStatus(200);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("❌ Erro:", error);
+    res.sendStatus(500);
+  }
 });
 
-app.listen(3000, () => console.log("🚀 Servidor rodando na porta 3000"));
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor rodando na porta ${PORT}`)
+);
